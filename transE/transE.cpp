@@ -12,17 +12,18 @@ using namespace std;
 const float pi = 3.141592653589793238462643383;
 
 int transeThreads = 8;
-int traneTrainTimes = 3000;
+int transeTrainTimes = 3000;
 int nbatches = 1;
-int dimension = 50;
+int dimension = 100;
 float transeAlpha = 0.001;
-float margin = 1;
+float margin = 1.5;
 
-string inPath = "/";
-string outPath = "/";
+string inPath = "../data/";
+string outPath = "";
 
 int *lefHead, *rigHead;
 int *lefTail, *rigTail;
+int *freqEnt, *freqRel;
 
 struct Triple {
 	int h, r, t;
@@ -94,6 +95,7 @@ void norm(float * con) {
 int relationTotal, entityTotal, tripleTotal;
 float *relationVec, *entityVec;
 float *relationVecDao, *entityVecDao;
+float *left_mean, *right_mean;
 
 void init() {
 
@@ -105,6 +107,7 @@ void init() {
 	fclose(fin);
 
 	relationVec = (float *)calloc(relationTotal * dimension, sizeof(float));
+	freqRel = (int *)calloc(relationTotal, sizeof(int));
 	for (int i = 0; i < relationTotal; i++) {
 		for (int ii=0; ii<dimension; ii++)
 			relationVec[i * dimension + ii] = randn(0, 1.0 / dimension, -6 / sqrt(dimension), 6 / sqrt(dimension));
@@ -115,6 +118,7 @@ void init() {
 	fclose(fin);
 
 	entityVec = (float *)calloc(entityTotal * dimension, sizeof(float));
+	freqEnt = (int *)calloc(entityTotal, sizeof(int));
 	for (int i = 0; i < entityTotal; i++) {
 		for (int ii=0; ii<dimension; ii++)
 			entityVec[i * dimension + ii] = randn(0, 1.0 / dimension, -6 / sqrt(dimension), 6 / sqrt(dimension));
@@ -130,13 +134,15 @@ void init() {
 	while (fscanf(fin, "%d", &trainList[tripleTotal].h) == 1) {
 		tmp = fscanf(fin, "%d", &trainList[tripleTotal].t);
 		tmp = fscanf(fin, "%d", &trainList[tripleTotal].r);
-		trainTail[tripleTotal].h = trainHead[tripleTotal].h;
-		trainTail[tripleTotal].t = trainHead[tripleTotal].t;
-		trainTail[tripleTotal].r = trainHead[tripleTotal].r;
-
-		trainTail[tripleTotal].h = trainHead[tripleTotal].h;
-		trainTail[tripleTotal].t = trainHead[tripleTotal].t;
-		trainTail[tripleTotal].r = trainHead[tripleTotal].r;
+		freqEnt[trainList[tripleTotal].t]++;
+		freqEnt[trainList[tripleTotal].h]++;
+		freqRel[trainList[tripleTotal].r]++;
+		trainHead[tripleTotal].h = trainList[tripleTotal].h;
+		trainHead[tripleTotal].t = trainList[tripleTotal].t;
+		trainHead[tripleTotal].r = trainList[tripleTotal].r;
+		trainTail[tripleTotal].h = trainList[tripleTotal].h;
+		trainTail[tripleTotal].t = trainList[tripleTotal].t;
+		trainTail[tripleTotal].r = trainList[tripleTotal].r;
 		tripleTotal++;
 	}
 	fclose(fin);
@@ -162,6 +168,25 @@ void init() {
 	}
 	rigHead[trainHead[tripleTotal - 1].h] = tripleTotal - 1;
 	rigTail[trainTail[tripleTotal - 1].t] = tripleTotal - 1;
+
+	left_mean = (float *)calloc(relationTotal,sizeof(float));
+	right_mean = (float *)calloc(relationTotal,sizeof(float));
+	for (int i = 0; i < entityTotal; i++) {
+		for (int j = lefHead[i] + 1; j < rigHead[i]; j++)
+			if (trainHead[j].r != trainHead[j - 1].r)
+				left_mean[trainHead[j].r] += 1.0;
+		if (lefHead[i] <= rigHead[i])
+			left_mean[trainHead[lefHead[i]].r] += 1.0;
+		for (int j = lefTail[i] + 1; j < rigTail[i]; j++)
+			if (trainTail[j].r != trainTail[j - 1].r)
+				right_mean[trainTail[j].r] += 1.0;
+		if (lefTail[i] <= rigTail[i])
+			right_mean[trainTail[lefTail[i]].r] += 1.0;
+	}
+	for (int i = 0; i < relationTotal; i++) {
+		left_mean[i] = freqRel[i] / left_mean[i];
+		right_mean[i] = freqRel[i] / right_mean[i];
+	}
 
 	relationVecDao = (float*)calloc(dimension * relationTotal, sizeof(float));
 	entityVecDao = (float*)calloc(dimension * entityTotal, sizeof(float));
@@ -294,7 +319,8 @@ void* transetrainMode(void *con) {
 	for (int k = transeBatch / transeThreads; k >= 0; k--) {
 		int j;
 		int i = rand_max(id, transeLen);
-		int pr = 500;
+		// int pr = 500;
+		float pr = 1000*right_mean[trainList[i].r]/(right_mean[trainList[i].r]+left_mean[trainList[i].r]);
 		if (randd(id) % 1000 < pr) {
 			j = corrupt_head(id, trainList[i].h, trainList[i].r);
 			train_kb(trainList[i].h, trainList[i].t, trainList[i].r, trainList[i].h, j, trainList[i].r);
@@ -302,10 +328,10 @@ void* transetrainMode(void *con) {
 			j = corrupt_tail(id, trainList[i].t, trainList[i].r);
 			train_kb(trainList[i].h, trainList[i].t, trainList[i].r, j, trainList[i].t, trainList[i].r);
 		}
-		norm(relationVec + dimension * trainList[i].r);
-		norm(entityVec + dimension * trainList[i].h);
-		norm(entityVec + dimension * trainList[i].t);
-		norm(entityVec + dimension * j);
+		// norm(relationVec + dimension * trainList[i].r);
+		// norm(entityVec + dimension * trainList[i].h);
+		// norm(entityVec + dimension * trainList[i].t);
+		// norm(entityVec + dimension * j);
 	}
 }
 
@@ -313,7 +339,7 @@ void* train_transe(void *con) {
 	transeLen = tripleTotal;
 	transeBatch = transeLen / nbatches;
 	next_random = (unsigned long long *)calloc(transeThreads, sizeof(unsigned long long));
-	for (int epoch = 0; epoch < traneTrainTimes; epoch++) {
+	for (int epoch = 0; epoch < transeTrainTimes; epoch++) {
 		res = 0;
 		for (int batch = 0; batch < nbatches; batch++) {
 			pthread_t *pt = (pthread_t *)malloc(transeThreads * sizeof(pthread_t));
