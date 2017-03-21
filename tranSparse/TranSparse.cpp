@@ -10,14 +10,13 @@
 using namespace std;
 
 const float pi = 3.141592653589793238462643383;
-
 int bern = 1;
-int transRThreads = 8;
-int transRTrainTimes = 1000;
+int tranSparseThreads = 8;
+int tranSparseTrainTimes = 1000;
 int nbatches = 100;
 int dimension = 50;
 int dimensionR = 50;
-float transRAlpha = 0.001;
+float tranSparseAlpha = 0.001;
 float margin = 1;
 
 string inPath = "./data/";
@@ -67,8 +66,8 @@ unsigned long long randd(int id) {
 
 int rand_max(int id, int x) {
 	int res = randd(id) % x;
-	while (res<0)
-		res+=x;
+	while (res < 0)
+		res += x;
 	return res;
 }
 
@@ -100,29 +99,31 @@ void norm(float *con, int dimension) {
 			*(con + ii) /= x;
 }
 
-void norm(float *con, float *matrix) {
-	float tmp, x;
-	int last;
-	x = 0;
-	last = 0;
+void norm(float *con, float *matrix, int *sparse) {
+	float tmp, x = 0;
+	int last = 0, lastM = 0;
 	for (int ii = 0; ii < dimensionR; ii++) {
 		tmp = 0;
-		for (int jj=0; jj < dimension; jj++) {
-			tmp += matrix[last] * con[jj];
-			last++;
-		}
+		for (int i = sparse[last]; i >= 1; i--)
+			tmp += matrix[lastM + sparse[last + i]] * con[sparse[last + i]];
 		x += tmp * tmp;
+		last += sparse[last] + 1;
+		lastM += dimension;
 	}
-	if (x>1) {
+	if (x > 1) {
 		float lambda = 1;
-		for (int ii = 0, last = 0; ii < dimensionR; ii++, last += dimension) {
+		last = 0; lastM = 0;
+		for (int ii = 0; ii < dimensionR; ii++) {
 			tmp = 0;
-			for (int jj = 0; jj < dimension; jj++)
-				tmp += ((matrix[last + jj] * con[jj]) * 2);
-			for (int jj = 0; jj < dimension; jj++) {
-				matrix[last + jj] -= transRAlpha * lambda * tmp * con[jj];
-				con[jj] -= transRAlpha * lambda * tmp * matrix[last + jj];
+			for (int jj = sparse[last]; jj >= 1; jj--)
+				tmp += matrix[lastM + sparse[last + jj]] * con[sparse[last + jj]];
+			tmp = tmp + tmp;
+			for (int jj = sparse[last]; jj >= 1; jj--) {
+				matrix[lastM + sparse[last + jj]] -= tranSparseAlpha * lambda * tmp * con[sparse[last + jj]];
+				con[sparse[last + jj]] -= tranSparseAlpha * lambda * tmp * matrix[lastM + sparse[last + jj]];
 			}
+			last += sparse[last] + 1;
+			lastM += dimension;
 		}
 	}
 }
@@ -130,18 +131,22 @@ void norm(float *con, float *matrix) {
 int relationTotal, entityTotal, tripleTotal;
 int *freqRel, *freqEnt;
 float *left_mean, *right_mean;
-float *relationVec, *entityVec, *matrix;
-float *relationVecDao, *entityVecDao, *matrixDao;
+float *relationVec, *entityVec, *matrixHead, *matrixTail;
+float *relationVecDao, *entityVecDao, *matrixHeadDao, *matrixTailDao;
 float *tmpValue;
+int *sparse_id_l, *sparse_id_r, *sparse_pos_l, *sparse_pos_r;
 
-void norm(int h, int t, int r, int j) {
+void norm(int h, int t, int r, int j, int tip) {
 		norm(relationVecDao + dimensionR * r, dimensionR);
 		norm(entityVecDao + dimension * h, dimension);
 		norm(entityVecDao + dimension * t, dimension);
 		norm(entityVecDao + dimension * j, dimension);
-		norm(entityVecDao + dimension * h, matrixDao + dimension * dimensionR * r);
-		norm(entityVecDao + dimension * t, matrixDao + dimension * dimensionR * r);
-		norm(entityVecDao + dimension * j, matrixDao + dimension * dimensionR * r);
+		norm(entityVecDao + dimension * h, matrixHeadDao + dimension * dimensionR * r, sparse_id_l + sparse_pos_l[r]);
+		norm(entityVecDao + dimension * t, matrixTailDao + dimension * dimensionR * r, sparse_id_r + sparse_pos_r[r]);
+		if (tip == 1)
+			norm(entityVecDao + dimension * j, matrixHeadDao + dimension * dimensionR * r, sparse_id_l + sparse_pos_l[r]);
+		else
+			norm(entityVecDao + dimension * j, matrixTailDao + dimension * dimensionR * r, sparse_id_r + sparse_pos_r[r]);
 }
 
 /*
@@ -161,12 +166,15 @@ void init() {
 	tmp = fscanf(fin, "%d", &entityTotal);
 	fclose(fin);
 
-	relationVec = (float *)calloc(relationTotal * dimensionR * 2 + entityTotal * dimension * 2 + relationTotal * dimension * dimensionR * 2, sizeof(float));
+	relationVec = (float *)calloc(relationTotal * dimensionR * 2 + entityTotal * dimension * 2 + relationTotal * dimension * dimensionR * 4, sizeof(float));
 	relationVecDao = relationVec + relationTotal * dimensionR;
 	entityVec = relationVecDao + relationTotal * dimensionR;
 	entityVecDao = entityVec + entityTotal * dimension;
-	matrix = entityVecDao + entityTotal * dimension;
-	matrixDao = matrix + dimension * dimensionR * relationTotal;
+	matrixHead = entityVecDao + entityTotal * dimension;
+	matrixHeadDao = matrixHead + dimension * dimensionR * relationTotal;
+	matrixTail = matrixHeadDao + dimension * dimensionR * relationTotal;
+	matrixTailDao = matrixTail + dimension * dimensionR * relationTotal;
+
 	freqRel = (int *)calloc(relationTotal + entityTotal, sizeof(int));
 	freqEnt = freqRel + relationTotal;
 
@@ -182,8 +190,10 @@ void init() {
 
 	for (int i = 0; i < relationTotal; i++)
 		for (int j = 0; j < dimensionR; j++)
-			for (int k = 0; k < dimension; k++)
-				matrix[i * dimension * dimensionR + j * dimension + k] =  randn(0, 1.0 / dimension, -6 / sqrt(dimension), 6 / sqrt(dimension));
+			for (int k = 0; k < dimension; k++) {
+				matrixHead[i * dimension * dimensionR + j * dimension + k] =  randn(0, 1.0 / dimension, -6 / sqrt(dimension), 6 / sqrt(dimension));
+				matrixTail[i * dimension * dimensionR + j * dimension + k] =  randn(0, 1.0 / dimension, -6 / sqrt(dimension), 6 / sqrt(dimension));
+			}
 
 	fin = fopen((inPath + "triple2id.txt").c_str(), "r");
 	tmp = fscanf(fin, "%d", &tripleTotal);
@@ -246,47 +256,88 @@ void init() {
 	for (int i = 0; i < relationTotal; i++)
 		for (int j = 0; j < dimensionR; j++)
 			for (int k = 0; k < dimension; k++)
-				if (j == k)
-					matrix[i * dimension * dimensionR + j * dimension + k] = 1;
-				else
-					matrix[i * dimension * dimensionR + j * dimension + k] = 0;
-	FILE* f1 = fopen("../transRdata/entity2vec.bern","r");
+				if (j == k) {
+					matrixHead[i * dimension * dimensionR + j * dimension + k] = 1;
+					matrixTail[i * dimension * dimensionR + j * dimension + k] = 1;
+				}
+				else {
+					matrixHead[i * dimension * dimensionR + j * dimension + k] = 0;
+					matrixTail[i * dimension * dimensionR + j * dimension + k] = 0;
+				}
+	
+	FILE* f1 = fopen("../tranSparsedata/entity2vec.bern","r");
 	for (int i = 0; i < entityTotal; i++) {
 		for (int ii = 0; ii < dimension; ii++)
 			tmp = fscanf(f1, "%f", &entityVec[i * dimension + ii]);
 		norm(entityVec + i * dimension, dimension);
 	}
 	fclose(f1);
-	FILE* f2 = fopen("../transRdata/relation2vec.bern","r");
+	FILE* f2 = fopen("../tranSparsedata/relation2vec.bern","r");
 	for (int i=0; i < relationTotal; i++) {
 		for (int ii=0; ii < dimension; ii++)
 			tmp = fscanf(f2, "%f", &relationVec[i * dimensionR + ii]);
 	}
 	fclose(f2);
+
+	int numLef, numRig;
+
+	FILE* f_d_l = fopen((inPath + "set_num_l.txt").c_str(), "r");
+	fscanf(f_d_l, "%d", &numLef);
+	sparse_id_l = (int *)calloc(numLef, sizeof(int));
+	sparse_pos_l = (int *)calloc(relationTotal, sizeof(int));
+	for (int i = 0; i < numLef; i++)
+		tmp = fscanf(f_d_l, "%d", &sparse_id_l[i]);
+	for (int i = 0, last = 0; i < relationTotal; i++) {
+		sparse_pos_l[i] = last;
+		for (int j = 0; j < dimensionR; j++)
+			last = last + sparse_id_l[last] + 1;
+	}
+	fclose(f_d_l);
+
+	FILE* f_d_r = fopen((inPath + "set_num_r.txt").c_str(), "r");
+	fscanf(f_d_r, "%d", &numRig);
+	sparse_id_r = (int *)calloc(numRig, sizeof(int));
+	sparse_pos_r = (int *)calloc(relationTotal, sizeof(int));
+	for (int i = 0; i < numRig; i++)
+		tmp = fscanf(f_d_r, "%d", &sparse_id_r[i]);
+	for (int i = 0, last = 0; i < relationTotal; i++) {
+		sparse_pos_r[i] = last;
+		for (int j = 0; j < dimensionR; j++)
+			last = last + sparse_id_r[last] + 1;
+	}
+	fclose(f_d_r);
 }
 
 /*
-	Training process of transR.
+	Training process of tranSparse.
 */
 
-int transRLen;
-int transRBatch;
+int tranSparseLen;
+int tranSparseBatch;
 float res;
 
-float calc_sum(int e1, int e2, int rel, float *tmp1, float *tmp2) {
-	int lastM = rel * dimension * dimensionR;
+double calc_sum(int e1, int e2, int rel, float *tmp1, float *tmp2) {
+	int lastM = rel * dimensionR * dimension;
 	int last1 = e1 * dimension;
 	int last2 = e2 * dimension;
-	int lastr = rel * dimensionR;
+	int lastR = rel * dimensionR;
+	int lastl = sparse_pos_l[rel], lastr = sparse_pos_r[rel];
 	float sum = 0;
-	for (int ii = 0; ii < dimensionR; ii++) {
-		tmp1[ii] = tmp2[ii] = 0;
-		for (int jj = 0; jj < dimension; jj++) {
-			tmp1[ii] += matrix[lastM + jj] * entityVec[last1 + jj];
-			tmp2[ii] += matrix[lastM + jj] * entityVec[last2 + jj];
+	for (int i = 0; i < dimensionR; i++) {
+		tmp1[i] = 0;
+		for (int jj = sparse_id_l[lastl]; jj >= 1; jj--) {
+			int j = sparse_id_l[lastl+jj];
+			tmp1[i] += matrixHead[lastM + j] * entityVec[last1 + j];
+		}
+		tmp2[i] = 0;
+		for (int jj = sparse_id_l[lastr]; jj >= 1; jj--) {
+			int j = sparse_id_r[lastr+jj];
+			tmp2[i] += matrixTail[lastM + j] * entityVec[last2 + j];
 		}
 		lastM += dimension;
-		sum += fabs(tmp1[ii] + relationVec[lastr + ii] - tmp2[ii]);
+		lastl += sparse_id_l[lastl] + 1;
+		lastr += sparse_id_r[lastr] + 1;
+		sum += fabs(tmp1[i] + relationVec[lastR + i] - tmp2[i]);
 	}
 	return sum;
 }
@@ -296,20 +347,28 @@ void gradient(int e1_a, int e2_a, int rel_a, int belta, int same, float *tmp1, f
 	int lasta2 = e2_a * dimension;
 	int lastar = rel_a * dimensionR;
 	int lastM = rel_a * dimensionR * dimension;
+	int lastl = sparse_pos_l[rel_a], lastr = sparse_pos_r[rel_a];
 	float x;
 	for (int ii=0; ii < dimensionR; ii++) {
 		x = tmp2[ii] - tmp1[ii] - relationVec[lastar + ii];
 		if (x > 0)
-			x = belta * transRAlpha;
+			x = belta * tranSparseAlpha;
 		else
-			x = -belta * transRAlpha;
-		for (int jj = 0; jj < dimension; jj++) {
-			matrixDao[lastM + jj] -=  x * (entityVec[lasta1 + jj] - entityVec[lasta2 + jj]);
-			entityVecDao[lasta1 + jj] -= x * matrix[lastM + jj];
-			entityVecDao[lasta2 + jj] += x * matrix[lastM + jj];
+			x = -belta * tranSparseAlpha;
+		for (int j = sparse_id_l[lastl]; j >= 1; j--) {
+			int jj = sparse_id_l[lastl + j];
+			matrixHeadDao[lastM + jj] -=  x * (entityVec[lasta1 + jj]);
+			entityVecDao[lasta1 + jj] -= x * matrixHead[lastM + jj];
+		}
+		for (int j = sparse_id_r[lastr]; j >= 1; j--) {
+			int jj = sparse_id_r[lastr + j];
+			matrixTailDao[lastM + jj] -=  x * (-entityVec[lasta2 + jj]);
+			entityVecDao[lasta2 + jj] += x * matrixTail[lastM + jj];
 		}
 		relationVecDao[lastar + ii] -= same * x;
 		lastM = lastM + dimension;
+		lastl += sparse_id_l[lastl] + 1;
+		lastr += sparse_id_r[lastr] + 1;
 	}
 }
 
@@ -387,58 +446,62 @@ int corrupt_tail(int id, int t, int r) {
 	return tmp + lef - ll + 1;
 }
 
-void* transRtrainMode(void *con) {
-	int id, i, j, pr;
+void* tranSparsetrainMode(void *con) {
+	int id, i, j, pr, tip;
 	id = (unsigned long long)(con);
 	next_random[id] = rand();
 	float *tmp = tmpValue + id * dimensionR * 4;
-	for (int k = transRBatch / transRThreads; k >= 0; k--) {
-		i = rand_max(id, transRLen);	
+	for (int k = tranSparseBatch / tranSparseThreads; k >= 0; k--) {
+		i = rand_max(id, tranSparseLen);	
 		if (bern)
 			pr = 1000*right_mean[trainList[i].r]/(right_mean[trainList[i].r]+left_mean[trainList[i].r]);
 		else
 			pr = 500;
 		if (randd(id) % 1000 < pr) {
 			j = corrupt_head(id, trainList[i].h, trainList[i].r);
+			tip = 0;
 			train_kb(trainList[i].h, trainList[i].t, trainList[i].r, trainList[i].h, j, trainList[i].r, tmp);
 		} else {
 			j = corrupt_tail(id, trainList[i].t, trainList[i].r);
+			tip = 1;
 			train_kb(trainList[i].h, trainList[i].t, trainList[i].r, j, trainList[i].t, trainList[i].r, tmp);
 		}
-		norm(trainList[i].h, trainList[i].t, trainList[i].r, j);
+		norm(trainList[i].h, trainList[i].t, trainList[i].r, j, tip);
 	}
 }
 
-void* train_transR(void *con) {
-	transRLen = tripleTotal;
-	transRBatch = transRLen / nbatches;
-	next_random = (unsigned long long *)calloc(transRThreads, sizeof(unsigned long long));
-	tmpValue = (float *)calloc(transRThreads * dimensionR * 4, sizeof(float));
+void* train_tranSparse(void *con) {
+	tranSparseLen = tripleTotal;
+	tranSparseBatch = tranSparseLen / nbatches;
+	next_random = (unsigned long long *)calloc(tranSparseThreads, sizeof(unsigned long long));
+	tmpValue = (float *)calloc(tranSparseThreads * dimensionR * 4, sizeof(float));
 	memcpy(relationVecDao, relationVec, dimensionR * relationTotal * sizeof(float));
 	memcpy(entityVecDao, entityVec, dimension * entityTotal * sizeof(float));
-	memcpy(matrixDao, matrix, dimension * relationTotal * dimensionR * sizeof(float));
-	for (int epoch = 0; epoch < transRTrainTimes; epoch++) {
+	memcpy(matrixHeadDao, matrixHead, dimension * relationTotal * dimensionR * sizeof(float));
+	memcpy(matrixTailDao, matrixTail, dimension * relationTotal * dimensionR * sizeof(float));
+	for (int epoch = 0; epoch < tranSparseTrainTimes; epoch++) {
 		res = 0;
 		for (int batch = 0; batch < nbatches; batch++) {
-			pthread_t *pt = (pthread_t *)malloc(transRThreads * sizeof(pthread_t));
-			for (int a = 0; a < transRThreads; a++)
-				pthread_create(&pt[a], NULL, transRtrainMode,  (void*)a);
-			for (int a = 0; a < transRThreads; a++)
+			pthread_t *pt = (pthread_t *)malloc(tranSparseThreads * sizeof(pthread_t));
+			for (int a = 0; a < tranSparseThreads; a++)
+				pthread_create(&pt[a], NULL, tranSparsetrainMode,  (void*)a);
+			for (int a = 0; a < tranSparseThreads; a++)
 				pthread_join(pt[a], NULL);
 			free(pt);
 			memcpy(relationVec, relationVecDao, dimensionR * relationTotal * sizeof(float));
 			memcpy(entityVec, entityVecDao, dimension * entityTotal * sizeof(float));
-			memcpy(matrix, matrixDao, dimension * relationTotal * dimensionR * sizeof(float));
+			memcpy(matrixHead, matrixHeadDao, dimension * relationTotal * dimensionR * sizeof(float));
+			memcpy(matrixTail, matrixTailDao, dimension * relationTotal * dimensionR * sizeof(float));
 		}
 		printf("epoch %d %f\n", epoch, res);
 	}
 }
 
 /*
-	Get the results of transR.
+	Get the results of tranSparse.
 */
 
-void out_transR() {
+void out_tranSparse() {
 		FILE* f2 = fopen((outPath + "relation2vec.bern").c_str(), "w");
 		FILE* f3 = fopen((outPath + "entity2vec.bern").c_str(), "w");
 		for (int i=0; i < relationTotal; i++) {
@@ -459,7 +522,13 @@ void out_transR() {
 		for (int i = 0; i < relationTotal; i++)
 			for (int jj = 0; jj < dimension; jj++) {
 				for (int ii = 0; ii < dimensionR; ii++)
-					fprintf(f1, "%f\t", matrix[i * dimensionR * dimension + jj + ii * dimension]);
+					fprintf(f1, "%f\t", matrixHead[i * dimensionR * dimension + jj + ii * dimension]);
+				fprintf(f1,"\n");
+			}
+		for (int i = 0; i < relationTotal; i++)
+			for (int jj = 0; jj < dimension; jj++) {
+				for (int ii = 0; ii < dimensionR; ii++)
+					fprintf(f1, "%f\t", matrixTail[i * dimensionR * dimension + jj + ii * dimension]);
 				fprintf(f1,"\n");
 			}
 		fclose(f1);
@@ -471,7 +540,7 @@ void out_transR() {
 
 int main() {
 	init();
-	train_transR(NULL);
-	out_transR();
+	train_tranSparse(NULL);
+	out_tranSparse();
 	return 0;
 }
