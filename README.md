@@ -1,6 +1,6 @@
 # Fast-TransX
 
-An extremely fast implementation of TransE [1], TransH [2], TransR [3], TranSparse [4] for knowledge representation learning (KRL) based on our previous pakcage KB2E ("https://github.com/thunlp/KB2E") for KRL. The overall framework is similar to KB2E, with some underlying design changes for acceleration. This implementation also supports multi-threaded training to save time.
+An extremely fast implementation of TransE [1], TransH [2], TransR [3], TransD [4], TranSparse [5] for knowledge representation learning (KRL) based on our previous pakcage KB2E ("https://github.com/thunlp/KB2E") for KRL. The overall framework is similar to KB2E, with some underlying design changes for acceleration. This implementation also supports multi-threaded training to save time.
 
 # Evaluation Results
 
@@ -43,4 +43,6 @@ Yankai Lin, Zhiyuan Liu, Maosong Sun, Yang Liu, Xuan Zhu. Learning Entity and Re
 
 [3] Yankai Lin, Zhiyuan Liu, et al. Learning Entity and Relation Embeddings for Knowledge Graph Completion. Proceedings of AAAI, 2015.
 
-[4] Guoliang Ji, Kang Liu, et al. Knowledge Graph Completion with Adaptive Sparse Transfer Matrix. Proceedings of AAAI, 2016.
+[4] Guoliang Ji, Shizhu He, et al. Knowledge Graph Embedding via Dynamic Mapping Matrix. Proceedings of ACL, 2015.
+
+[5] Guoliang Ji, Kang Liu, et al. Knowledge Graph Completion with Adaptive Sparse Transfer Matrix. Proceedings of AAAI, 2016.
