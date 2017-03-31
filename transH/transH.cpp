@@ -11,7 +11,7 @@ using namespace std;
 
 const float pi = 3.141592653589793238462643383;
 
-int bern = 1;
+int bern = 0;
 int transHThreads = 8;
 int transHTrainTimes = 1000;
 int nbatches = 100;
@@ -393,6 +393,7 @@ void* transHtrainMode(void *con) {
 		}
 		norm(trainList[i].h, trainList[i].t, trainList[i].r, j);
 	}
+	pthread_exit(NULL);
 }
 
 void* train_transH(void *con) {
@@ -407,9 +408,9 @@ void* train_transH(void *con) {
 		res = 0;
 		for (int batch = 0; batch < nbatches; batch++) {
 			pthread_t *pt = (pthread_t *)malloc(transHThreads * sizeof(pthread_t));
-			for (int a = 0; a < transHThreads; a++)
+			for (long a = 0; a < transHThreads; a++)
 				pthread_create(&pt[a], NULL, transHtrainMode,  (void*)a);
-			for (int a = 0; a < transHThreads; a++)
+			for (long a = 0; a < transHThreads; a++)
 				pthread_join(pt[a], NULL);
 			free(pt);
 			memcpy(relationVec, relationVecDao, dimension * relationTotal * sizeof(float));
@@ -418,6 +419,7 @@ void* train_transH(void *con) {
 		}
 		printf("epoch %d %f\n", epoch, res);
 	}
+	pthread_exit(NULL);
 }
 
 /*
@@ -425,9 +427,9 @@ void* train_transH(void *con) {
 */
 
 void out_transH() {
-		FILE* f2 = fopen((outPath + "relation2vec.bern").c_str(), "w");
-		FILE* f3 = fopen((outPath + "entity2vec.txt").c_str(), "w");
-		for (int i=0; i < relationTotal; i++) {
+		FILE* f2 = fopen((outPath + "relation2vec.vec").c_str(), "w");
+		FILE* f3 = fopen((outPath + "entity2vec.vec").c_str(), "w");
+		for (int i = 0; i < relationTotal; i++) {
 			int last = dimension * i;
 			for (int ii = 0; ii < dimension; ii++)
 				fprintf(f2, "%.6f\t", relationVec[last + ii]);
@@ -441,7 +443,7 @@ void out_transH() {
 		}
 		fclose(f2);
 		fclose(f3);
-		FILE* f1 = fopen((outPath + "A.txt").c_str(),"w");
+		FILE* f1 = fopen((outPath + "A.vec").c_str(),"w");
 		for (int i = 0; i < relationTotal; i++)
 			for (int j = 0; j < dimension; j++) {
 					fprintf(f1, "%f\t", A[i * dimension + j]);

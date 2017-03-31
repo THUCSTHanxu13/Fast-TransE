@@ -11,7 +11,7 @@ using namespace std;
 
 const float pi = 3.141592653589793238462643383;
 
-int bern = 1;
+int bern = 0;
 int transRThreads = 8;
 int transRTrainTimes = 1000;
 int nbatches = 100;
@@ -243,6 +243,7 @@ void init() {
 		left_mean[i] = freqRel[i] / left_mean[i];
 		right_mean[i] = freqRel[i] / right_mean[i];
 	}
+
 	for (int i = 0; i < relationTotal; i++)
 		for (int j = 0; j < dimensionR; j++)
 			for (int k = 0; k < dimension; k++)
@@ -250,14 +251,15 @@ void init() {
 					matrix[i * dimension * dimensionR + j * dimension + k] = 1;
 				else
 					matrix[i * dimension * dimensionR + j * dimension + k] = 0;
-	FILE* f1 = fopen("../transRdata/entity2vec.bern","r");
+
+	FILE* f1 = fopen((inPath + "transRdata/entity2vec.bern").c_str(),"r");
 	for (int i = 0; i < entityTotal; i++) {
 		for (int ii = 0; ii < dimension; ii++)
 			tmp = fscanf(f1, "%f", &entityVec[i * dimension + ii]);
 		norm(entityVec + i * dimension, dimension);
 	}
 	fclose(f1);
-	FILE* f2 = fopen("../transRdata/relation2vec.bern","r");
+	FILE* f2 = fopen((inPath + "transRdata/relation2vec.bern").c_str(),"r");
 	for (int i=0; i < relationTotal; i++) {
 		for (int ii=0; ii < dimension; ii++)
 			tmp = fscanf(f2, "%f", &relationVec[i * dimensionR + ii]);
@@ -407,6 +409,7 @@ void* transRtrainMode(void *con) {
 		}
 		norm(trainList[i].h, trainList[i].t, trainList[i].r, j);
 	}
+	pthread_exit(NULL);
 }
 
 void* train_transR(void *con) {
@@ -421,9 +424,9 @@ void* train_transR(void *con) {
 		res = 0;
 		for (int batch = 0; batch < nbatches; batch++) {
 			pthread_t *pt = (pthread_t *)malloc(transRThreads * sizeof(pthread_t));
-			for (int a = 0; a < transRThreads; a++)
+			for (long a = 0; a < transRThreads; a++)
 				pthread_create(&pt[a], NULL, transRtrainMode,  (void*)a);
-			for (int a = 0; a < transRThreads; a++)
+			for (long a = 0; a < transRThreads; a++)
 				pthread_join(pt[a], NULL);
 			free(pt);
 			memcpy(relationVec, relationVecDao, dimensionR * relationTotal * sizeof(float));
@@ -432,6 +435,7 @@ void* train_transR(void *con) {
 		}
 		printf("epoch %d %f\n", epoch, res);
 	}
+	pthread_exit(NULL);
 }
 
 /*
@@ -439,9 +443,9 @@ void* train_transR(void *con) {
 */
 
 void out_transR() {
-		FILE* f2 = fopen((outPath + "relation2vec.bern").c_str(), "w");
-		FILE* f3 = fopen((outPath + "entity2vec.bern").c_str(), "w");
-		for (int i=0; i < relationTotal; i++) {
+		FILE* f2 = fopen((outPath + "relation2vec.vec").c_str(), "w");
+		FILE* f3 = fopen((outPath + "entity2vec.vec").c_str(), "w");
+		for (int i = 0; i < relationTotal; i++) {
 			int last = dimension * i;
 			for (int ii = 0; ii < dimension; ii++)
 				fprintf(f2, "%.6f\t", relationVec[last + ii]);
@@ -455,7 +459,7 @@ void out_transR() {
 		}
 		fclose(f2);
 		fclose(f3);
-		FILE* f1 = fopen((outPath + "A.bern").c_str(),"w");
+		FILE* f1 = fopen((outPath + "A.vec").c_str(),"w");
 		for (int i = 0; i < relationTotal; i++)
 			for (int jj = 0; jj < dimension; jj++) {
 				for (int ii = 0; ii < dimensionR; ii++)
